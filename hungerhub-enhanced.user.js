@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HungerHub Enhanced
 // @namespace    hungerhub-enhanced
-// @version      1.0.0
+// @version      1.1.0
 // @description  Displays Google ratings, reviews, and Maps links on hungerhub restaurant listings
 // @match        https://uncatering.hungerhub.com/*
 // @grant        GM_xmlhttpRequest
