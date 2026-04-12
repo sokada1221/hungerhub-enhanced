@@ -26,6 +26,7 @@
     CACHE_TTL_MS: 30 * 24 * 60 * 60 * 1000,
     REQUEST_DELAY_MS: 250,
     LOCATION_QUERY_SUFFIX: "Toronto",
+    CARD_SELECTOR: null,
   };
 
   function getConfig(key) {
@@ -68,6 +69,19 @@
     if (suffix !== null) {
       GM_setValue("LOCATION_QUERY_SUFFIX", suffix.trim());
       alert("Location suffix saved. Reload the page to apply.");
+    }
+  });
+
+  GM_registerMenuCommand("Set Card Container Selector", () => {
+    const current = getConfig("CARD_SELECTOR") || "";
+    const sel = prompt(
+      "CSS selector for the card container wrapping each restaurant\n" +
+        "(leave blank to auto-detect by walking up 2 levels from heading):",
+      current
+    );
+    if (sel !== null) {
+      GM_setValue("CARD_SELECTOR", sel.trim() || null);
+      alert("Card selector saved. Reload the page to apply.");
     }
   });
 
@@ -316,6 +330,44 @@
     queueRunning = false;
   }
 
+  // ── Rating Registry & Sorting ─────────────────────────────────────────────
+
+  const ratingRegistry = new Map();
+
+  function registerRating(headingEl, data) {
+    ratingRegistry.set(headingEl, {
+      rating: data.rating,
+      reviewCount: data.reviewCount,
+    });
+  }
+
+  function sortRestaurants() {
+    if (ratingRegistry.size < 2) return;
+
+    const cardSelector = getConfig("CARD_SELECTOR");
+    const cards = [];
+
+    for (const [el, data] of ratingRegistry) {
+      const card = cardSelector
+        ? el.closest(cardSelector)
+        : el.parentElement?.parentElement;
+      if (card) cards.push({ card, rating: data.rating, reviewCount: data.reviewCount });
+    }
+
+    if (cards.length < 2) return;
+    const container = cards[0].card.parentElement;
+    if (!container) return;
+
+    cards.sort((a, b) => {
+      const ra = a.rating ?? -1;
+      const rb = b.rating ?? -1;
+      if (rb !== ra) return rb - ra;
+      return b.reviewCount - a.reviewCount;
+    });
+
+    cards.forEach((c) => container.appendChild(c.card));
+  }
+
   // ── UI Rendering ───────────────────────────────────────────────────────────
 
   function renderStars(rating) {
@@ -442,11 +494,13 @@
 
     const cached = getCached(name);
     if (cached !== null) {
+      registerRating(headingEl, cached);
       injectRating(headingEl, cached);
       return;
     }
 
     if (!getApiKey()) {
+      registerRating(headingEl, { rating: null, reviewCount: 0 });
       const hint = createErrorIndicator("Set API key in Tampermonkey menu");
       headingEl.parentElement.insertBefore(hint, headingEl.nextSibling);
       return;
@@ -460,20 +514,24 @@
       loading.remove();
       if (data) {
         setCache(name, data);
+        registerRating(headingEl, data);
         injectRating(headingEl, data);
       } else {
-        setCache(name, {
+        const fallback = {
           name,
           rating: null,
           reviewCount: 0,
           mapsUrl: null,
           reviews: [],
-        });
+        };
+        setCache(name, fallback);
+        registerRating(headingEl, fallback);
         const notFound = createErrorIndicator("Not found on Google");
         headingEl.parentElement.insertBefore(notFound, headingEl.nextSibling);
       }
     } catch (err) {
       loading.remove();
+      registerRating(headingEl, { rating: null, reviewCount: 0 });
       console.error(`[HungerHub Enhanced] Error for "${name}":`, err);
       const errEl = createErrorIndicator("Rating unavailable");
       headingEl.parentElement.insertBefore(errEl, headingEl.nextSibling);
@@ -498,11 +556,15 @@
   function scanPage() {
     const selector = getConfig("SELECTOR");
     const headings = document.querySelectorAll(selector);
+    const promises = [];
     headings.forEach((el) => {
       if (!el.hasAttribute(PROCESSED_ATTR) && isRestaurantHeading(el)) {
-        enhanceRestaurant(el);
+        promises.push(enhanceRestaurant(el));
       }
     });
+    if (promises.length > 0) {
+      Promise.allSettled(promises).then(() => sortRestaurants());
+    }
   }
 
   let scanTimeout = null;

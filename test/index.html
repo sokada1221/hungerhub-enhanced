@@ -282,6 +282,7 @@
     // Test control functions
     function resetCards() {
       buildCards();
+      if (typeof ratingRegistry !== "undefined") ratingRegistry.clear();
       document.getElementById("status").innerHTML =
         "<strong>Reset complete.</strong> Cards rebuilt without ratings.";
     }
@@ -323,6 +324,7 @@
       CACHE_TTL_MS: 30 * 24 * 60 * 60 * 1000,
       REQUEST_DELAY_MS: 250,
       LOCATION_QUERY_SUFFIX: "Toronto",
+      CARD_SELECTOR: ".card",
     };
 
     function getConfig(key) { return GM_getValue(key, DEFAULTS[key] ?? null); }
@@ -497,6 +499,31 @@
     function escapeHtml(str) { const div = document.createElement("div"); div.textContent = str; return div.innerHTML; }
     function truncate(str, max) { if (!str || str.length <= max) return str || ""; return str.slice(0, max).replace(/\s+\S*$/, "") + "\u2026"; }
 
+    // Rating Registry & Sorting
+    const ratingRegistry = new Map();
+    function registerRating(headingEl, data) {
+      ratingRegistry.set(headingEl, { rating: data.rating, reviewCount: data.reviewCount });
+    }
+    function sortRestaurants() {
+      if (ratingRegistry.size < 2) return;
+      const cardSelector = getConfig("CARD_SELECTOR");
+      const cards = [];
+      for (const [el, data] of ratingRegistry) {
+        const card = cardSelector ? el.closest(cardSelector) : el.parentElement?.parentElement;
+        if (card) cards.push({ card, rating: data.rating, reviewCount: data.reviewCount });
+      }
+      if (cards.length < 2) return;
+      const container = cards[0].card.parentElement;
+      if (!container) return;
+      cards.sort((a, b) => {
+        const ra = a.rating ?? -1;
+        const rb = b.rating ?? -1;
+        if (rb !== ra) return rb - ra;
+        return b.reviewCount - a.reviewCount;
+      });
+      cards.forEach(c => container.appendChild(c.card));
+    }
+
     // DOM injection
     const PROCESSED_ATTR = "data-hhe-processed";
     function isRestaurantHeading(el) {
@@ -511,8 +538,9 @@
       const name = headingEl.textContent.trim();
       if (!name) return;
       const cached = getCached(name);
-      if (cached !== null) { injectRating(headingEl, cached); return; }
+      if (cached !== null) { registerRating(headingEl, cached); injectRating(headingEl, cached); return; }
       if (!getApiKey()) {
+        registerRating(headingEl, { rating: null, reviewCount: 0 });
         const hint = createErrorIndicator("Set API key in Tampermonkey menu");
         headingEl.parentElement.insertBefore(hint, headingEl.nextSibling);
         return;
@@ -522,13 +550,16 @@
       try {
         const data = await enqueue(() => searchPlace(name));
         loading.remove();
-        if (data) { setCache(name, data); injectRating(headingEl, data); }
+        if (data) { setCache(name, data); registerRating(headingEl, data); injectRating(headingEl, data); }
         else {
-          setCache(name, { name, rating: null, reviewCount: 0, mapsUrl: null, reviews: [] });
+          const fallback = { name, rating: null, reviewCount: 0, mapsUrl: null, reviews: [] };
+          setCache(name, fallback);
+          registerRating(headingEl, fallback);
           headingEl.parentElement.insertBefore(createErrorIndicator("Not found on Google"), headingEl.nextSibling);
         }
       } catch (err) {
         loading.remove();
+        registerRating(headingEl, { rating: null, reviewCount: 0 });
         console.error(`[HungerHub Enhanced] Error for "${name}":`, err);
         headingEl.parentElement.insertBefore(createErrorIndicator("Rating unavailable"), headingEl.nextSibling);
       }
@@ -544,9 +575,13 @@
     // Scan
     function scanPage() {
       const selector = getConfig("SELECTOR");
+      const promises = [];
       document.querySelectorAll(selector).forEach(el => {
-        if (!el.hasAttribute(PROCESSED_ATTR) && isRestaurantHeading(el)) enhanceRestaurant(el);
+        if (!el.hasAttribute(PROCESSED_ATTR) && isRestaurantHeading(el)) promises.push(enhanceRestaurant(el));
       });
+      if (promises.length > 0) {
+        Promise.allSettled(promises).then(() => sortRestaurants());
+      }
     }
   </script>
 </body>
