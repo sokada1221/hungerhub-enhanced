@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         HungerHub Enhanced
 // @namespace    hungerhub-enhanced
-// @version      1.1.2
+// @version      1.1.3
 // @description  Displays Google ratings, reviews, and Maps links on hungerhub restaurant listings
-// @match        https://uncatering.hungerhub.com/*
+// @match        https://uncatering.hungerhub.com/restaurants*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -18,7 +18,7 @@
   // ── Configuration ──────────────────────────────────────────────────────────
 
   const DEFAULTS = {
-    SELECTOR: "h5",
+    SELECTOR: "h5.restaurant-title",
     // 180 John Street, Toronto ON M5T 1X5
     LOCATION_LAT: 43.6498,
     LOCATION_LNG: -79.3899,
