@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HungerHub Enhanced
 // @namespace    hungerhub-enhanced
-// @version      1.1.1
+// @version      1.1.2
 // @description  Displays Google ratings, reviews, and Maps links on hungerhub restaurant listings
 // @match        https://uncatering.hungerhub.com/*
 // @grant        GM_xmlhttpRequest
@@ -361,7 +361,21 @@
     return null;
   }
 
+  function purgeStaleEntries() {
+    for (const el of ratingRegistry.keys()) {
+      if (!document.body.contains(el)) ratingRegistry.delete(el);
+    }
+  }
+
+  function compareByRating(a, b) {
+    const ra = a.rating ?? -1;
+    const rb = b.rating ?? -1;
+    if (rb !== ra) return rb - ra;
+    return b.reviewCount - a.reviewCount;
+  }
+
   function sortRestaurants() {
+    purgeStaleEntries();
     if (ratingRegistry.size < 2) return;
 
     const cardSelector = getConfig("CARD_SELECTOR");
@@ -377,33 +391,26 @@
       const container = cards[0].card.parentElement;
       if (!container) return;
 
-      cards.sort((a, b) => {
-        const ra = a.rating ?? -1;
-        const rb = b.rating ?? -1;
-        if (rb !== ra) return rb - ra;
-        return b.reviewCount - a.reviewCount;
-      });
+      cards.sort(compareByRating);
 
+      observer.disconnect();
       cards.forEach((c) => container.appendChild(c.card));
+      observer.observe(document.body, { childList: true, subtree: true });
     } else {
       const headings = [...ratingRegistry.keys()];
       const result = findCardContainer(headings);
       if (!result) return;
 
-      cards = headings.map((h) => {
-        const data = ratingRegistry.get(h);
-        const idx = headings.indexOf(h);
-        return { card: result.cards[idx], rating: data.rating, reviewCount: data.reviewCount };
+      cards = result.cards.map((card, i) => {
+        const data = ratingRegistry.get(headings[i]);
+        return { card, rating: data.rating, reviewCount: data.reviewCount };
       });
 
-      cards.sort((a, b) => {
-        const ra = a.rating ?? -1;
-        const rb = b.rating ?? -1;
-        if (rb !== ra) return rb - ra;
-        return b.reviewCount - a.reviewCount;
-      });
+      cards.sort(compareByRating);
 
+      observer.disconnect();
       cards.forEach((c) => result.container.appendChild(c.card));
+      observer.observe(document.body, { childList: true, subtree: true });
     }
   }
 
