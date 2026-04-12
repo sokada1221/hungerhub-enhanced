@@ -1,0 +1,533 @@
+// ==UserScript==
+// @name         HungerHub Enhanced
+// @namespace    hungerhub-enhanced
+// @version      1.0.0
+// @description  Displays Google ratings, reviews, and Maps links on hungerhub restaurant listings
+// @match        https://uncatering.hungerhub.com/*
+// @grant        GM_xmlhttpRequest
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_deleteValue
+// @grant        GM_registerMenuCommand
+// @connect      places.googleapis.com
+// ==/UserScript==
+
+(function () {
+  "use strict";
+
+  // ── Configuration ──────────────────────────────────────────────────────────
+
+  const DEFAULTS = {
+    SELECTOR: "h5",
+    // 180 John Street, Toronto ON M5T 1X5
+    LOCATION_LAT: 43.6498,
+    LOCATION_LNG: -79.3899,
+    LOCATION_RADIUS: 10000,
+    CACHE_TTL_MS: 30 * 24 * 60 * 60 * 1000,
+    REQUEST_DELAY_MS: 250,
+    LOCATION_QUERY_SUFFIX: "Toronto",
+  };
+
+  function getConfig(key) {
+    return GM_getValue(key, DEFAULTS[key] ?? null);
+  }
+
+  function getApiKey() {
+    return GM_getValue("API_KEY", "");
+  }
+
+  // ── Menu Commands ──────────────────────────────────────────────────────────
+
+  GM_registerMenuCommand("Set Google Places API Key", () => {
+    const current = getApiKey();
+    const key = prompt("Enter your Google Places API key:", current);
+    if (key !== null) {
+      GM_setValue("API_KEY", key.trim());
+      alert("API key saved. Reload the page to apply.");
+    }
+  });
+
+  GM_registerMenuCommand("Set Restaurant CSS Selector", () => {
+    const current = getConfig("SELECTOR");
+    const sel = prompt(
+      "CSS selector for restaurant name elements (default: h5):",
+      current
+    );
+    if (sel !== null) {
+      GM_setValue("SELECTOR", sel.trim());
+      alert("Selector saved. Reload the page to apply.");
+    }
+  });
+
+  GM_registerMenuCommand("Set Location Suffix", () => {
+    const current = getConfig("LOCATION_QUERY_SUFFIX");
+    const suffix = prompt(
+      "Location suffix appended to restaurant name in search (e.g. Toronto):",
+      current
+    );
+    if (suffix !== null) {
+      GM_setValue("LOCATION_QUERY_SUFFIX", suffix.trim());
+      alert("Location suffix saved. Reload the page to apply.");
+    }
+  });
+
+  GM_registerMenuCommand("Clear Rating Cache", () => {
+    const allKeys = GM_getValue("_cacheKeys", []);
+    allKeys.forEach((k) => GM_deleteValue(k));
+    GM_deleteValue("_cacheKeys");
+    alert(`Cleared ${allKeys.length} cached entries. Reload the page.`);
+  });
+
+  // ── Styles ─────────────────────────────────────────────────────────────────
+
+  const STYLE = document.createElement("style");
+  STYLE.textContent = `
+    .hhe-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: 4px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      line-height: 1.4;
+      cursor: pointer;
+      user-select: none;
+      transition: opacity 0.15s;
+    }
+    .hhe-badge:hover { opacity: 0.85; }
+    .hhe-badge--green { background: #e6f4ea; color: #1e7e34; }
+    .hhe-badge--yellow { background: #fff8e1; color: #b8860b; }
+    .hhe-badge--red { background: #fce4ec; color: #c62828; }
+    .hhe-badge--gray { background: #f5f5f5; color: #757575; }
+
+    .hhe-stars { letter-spacing: 1px; }
+
+    .hhe-panel {
+      display: none;
+      margin-top: 6px;
+      padding: 10px 12px;
+      background: #fafafa;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 12.5px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      max-width: 440px;
+    }
+    .hhe-panel--open { display: block; }
+
+    .hhe-review {
+      padding: 6px 0;
+      border-bottom: 1px solid #eee;
+    }
+    .hhe-review:last-child { border-bottom: none; }
+
+    .hhe-review-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2px;
+    }
+    .hhe-review-author {
+      font-weight: 600;
+      color: #333;
+    }
+    .hhe-review-time {
+      font-size: 11px;
+      color: #999;
+    }
+    .hhe-review-stars {
+      font-size: 11px;
+      letter-spacing: 0.5px;
+    }
+    .hhe-review-text {
+      color: #555;
+      line-height: 1.45;
+      margin-top: 2px;
+    }
+
+    .hhe-maps-link {
+      display: inline-block;
+      margin-top: 6px;
+      font-size: 12px;
+      color: #1a73e8;
+      text-decoration: none;
+    }
+    .hhe-maps-link:hover { text-decoration: underline; }
+
+    .hhe-loading {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: 4px;
+      font-size: 12px;
+      color: #999;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    @keyframes hhe-spin {
+      to { transform: rotate(360deg); }
+    }
+    .hhe-spinner {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 2px solid #ddd;
+      border-top-color: #999;
+      border-radius: 50%;
+      animation: hhe-spin 0.6s linear infinite;
+    }
+  `;
+  document.head.appendChild(STYLE);
+
+  // ── Cache Layer ────────────────────────────────────────────────────────────
+
+  function normalizeName(name) {
+    return name.trim().toLowerCase().replace(/['']/g, "'");
+  }
+
+  function cacheKey(name) {
+    return "_hhe_" + normalizeName(name);
+  }
+
+  function getCached(name) {
+    const key = cacheKey(name);
+    const entry = GM_getValue(key, null);
+    if (!entry) return null;
+    if (Date.now() - entry.ts > DEFAULTS.CACHE_TTL_MS) {
+      GM_deleteValue(key);
+      return null;
+    }
+    return entry.data;
+  }
+
+  function setCache(name, data) {
+    const key = cacheKey(name);
+    GM_setValue(key, { ts: Date.now(), data });
+    const keys = GM_getValue("_cacheKeys", []);
+    if (!keys.includes(key)) {
+      keys.push(key);
+      GM_setValue("_cacheKeys", keys);
+    }
+  }
+
+  // ── Google Places API ──────────────────────────────────────────────────────
+
+  const FIELD_MASK =
+    "places.displayName,places.rating,places.userRatingCount,places.reviews,places.googleMapsUri";
+
+  function searchPlace(restaurantName) {
+    const apiKey = getApiKey();
+    if (!apiKey) {
+      return Promise.reject(new Error("No API key configured"));
+    }
+
+    const suffix = getConfig("LOCATION_QUERY_SUFFIX");
+    const textQuery = suffix
+      ? `${restaurantName} ${suffix}`
+      : restaurantName;
+
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: "POST",
+        url: `https://places.googleapis.com/v1/places:searchText`,
+        headers: {
+          "Content-Type": "application/json",
+          "X-Goog-Api-Key": apiKey,
+          "X-Goog-FieldMask": FIELD_MASK,
+        },
+        data: JSON.stringify({
+          textQuery,
+          locationBias: {
+            circle: {
+              center: {
+                latitude: getConfig("LOCATION_LAT"),
+                longitude: getConfig("LOCATION_LNG"),
+              },
+              radius: getConfig("LOCATION_RADIUS"),
+            },
+          },
+          maxResultCount: 1,
+        }),
+        onload(res) {
+          if (res.status !== 200) {
+            reject(new Error(`Places API ${res.status}: ${res.responseText}`));
+            return;
+          }
+          try {
+            const body = JSON.parse(res.responseText);
+            const place = body.places?.[0];
+            if (!place) {
+              resolve(null);
+              return;
+            }
+            resolve({
+              name: place.displayName?.text ?? restaurantName,
+              rating: place.rating ?? null,
+              reviewCount: place.userRatingCount ?? 0,
+              mapsUrl: place.googleMapsUri ?? null,
+              reviews: (place.reviews ?? []).slice(0, 3).map((r) => ({
+                author: r.authorAttribution?.displayName ?? "Anonymous",
+                rating: r.rating ?? null,
+                time: r.relativePublishTimeDescription ?? "",
+                text:
+                  r.text?.text ??
+                  r.originalText?.text ??
+                  "",
+              })),
+            });
+          } catch (e) {
+            reject(e);
+          }
+        },
+        onerror(err) {
+          reject(new Error("Network error: " + (err.statusText || "unknown")));
+        },
+      });
+    });
+  }
+
+  // ── Rate-Limited Request Queue ─────────────────────────────────────────────
+
+  const queue = [];
+  let queueRunning = false;
+
+  function enqueue(fn) {
+    return new Promise((resolve, reject) => {
+      queue.push({ fn, resolve, reject });
+      if (!queueRunning) processQueue();
+    });
+  }
+
+  async function processQueue() {
+    queueRunning = true;
+    while (queue.length > 0) {
+      const { fn, resolve, reject } = queue.shift();
+      try {
+        resolve(await fn());
+      } catch (e) {
+        reject(e);
+      }
+      if (queue.length > 0) {
+        await new Promise((r) => setTimeout(r, DEFAULTS.REQUEST_DELAY_MS));
+      }
+    }
+    queueRunning = false;
+  }
+
+  // ── UI Rendering ───────────────────────────────────────────────────────────
+
+  function renderStars(rating) {
+    if (rating == null) return "";
+    const full = Math.floor(rating);
+    const half = rating - full >= 0.25 && rating - full < 0.75 ? 1 : 0;
+    const addFull = rating - full >= 0.75 ? 1 : 0;
+    const totalFull = full + addFull;
+    const empty = 5 - totalFull - half;
+    return (
+      "★".repeat(totalFull) +
+      (half ? "½" : "") +
+      "☆".repeat(Math.max(0, empty))
+    );
+  }
+
+  function ratingColor(rating) {
+    if (rating == null) return "gray";
+    if (rating >= 4.0) return "green";
+    if (rating >= 3.0) return "yellow";
+    return "red";
+  }
+
+  function createBadge(data) {
+    const badge = document.createElement("div");
+    badge.className = `hhe-badge hhe-badge--${ratingColor(data.rating)}`;
+    badge.innerHTML =
+      `<span class="hhe-stars">${renderStars(data.rating)}</span> ` +
+      `<strong>${data.rating != null ? data.rating.toFixed(1) : "N/A"}</strong>` +
+      `<span>(${data.reviewCount.toLocaleString()})</span>`;
+    badge.title = "Click to expand reviews";
+    return badge;
+  }
+
+  function createPanel(data) {
+    const panel = document.createElement("div");
+    panel.className = "hhe-panel";
+
+    if (data.reviews.length > 0) {
+      data.reviews.forEach((r) => {
+        const review = document.createElement("div");
+        review.className = "hhe-review";
+        review.innerHTML =
+          `<div class="hhe-review-header">` +
+          `<span class="hhe-review-author">${escapeHtml(r.author)}</span>` +
+          `<span class="hhe-review-time">${escapeHtml(r.time)}</span>` +
+          `</div>` +
+          (r.rating != null
+            ? `<div class="hhe-review-stars">${renderStars(r.rating)}</div>`
+            : "") +
+          `<div class="hhe-review-text">${escapeHtml(truncate(r.text, 200))}</div>`;
+        panel.appendChild(review);
+      });
+    } else {
+      const empty = document.createElement("div");
+      empty.style.cssText = "color:#999; font-size:12px; padding:4px 0;";
+      empty.textContent = "No reviews available.";
+      panel.appendChild(empty);
+    }
+
+    if (data.mapsUrl) {
+      const link = document.createElement("a");
+      link.className = "hhe-maps-link";
+      link.href = data.mapsUrl;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = "View on Google Maps \u2197";
+      panel.appendChild(link);
+    }
+
+    return panel;
+  }
+
+  function createLoadingIndicator() {
+    const el = document.createElement("div");
+    el.className = "hhe-loading";
+    el.innerHTML = '<span class="hhe-spinner"></span> Loading rating\u2026';
+    return el;
+  }
+
+  function createErrorIndicator(msg) {
+    const el = document.createElement("div");
+    el.className = "hhe-badge hhe-badge--gray";
+    el.textContent = msg;
+    el.style.cursor = "default";
+    return el;
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  function truncate(str, max) {
+    if (!str || str.length <= max) return str || "";
+    return str.slice(0, max).replace(/\s+\S*$/, "") + "\u2026";
+  }
+
+  // ── DOM Injection ──────────────────────────────────────────────────────────
+
+  const PROCESSED_ATTR = "data-hhe-processed";
+
+  function isRestaurantHeading(el) {
+    const text = el.textContent.trim();
+    if (!text || text.length < 2) return false;
+    const nonRestaurantTexts = [
+      "useful links",
+      "need help?",
+      "made with",
+      "download",
+    ];
+    return !nonRestaurantTexts.some((t) =>
+      text.toLowerCase().startsWith(t)
+    );
+  }
+
+  async function enhanceRestaurant(headingEl) {
+    if (headingEl.hasAttribute(PROCESSED_ATTR)) return;
+    headingEl.setAttribute(PROCESSED_ATTR, "1");
+
+    const name = headingEl.textContent.trim();
+    if (!name) return;
+
+    const cached = getCached(name);
+    if (cached !== null) {
+      injectRating(headingEl, cached);
+      return;
+    }
+
+    if (!getApiKey()) {
+      const hint = createErrorIndicator("Set API key in Tampermonkey menu");
+      headingEl.parentElement.insertBefore(hint, headingEl.nextSibling);
+      return;
+    }
+
+    const loading = createLoadingIndicator();
+    headingEl.parentElement.insertBefore(loading, headingEl.nextSibling);
+
+    try {
+      const data = await enqueue(() => searchPlace(name));
+      loading.remove();
+      if (data) {
+        setCache(name, data);
+        injectRating(headingEl, data);
+      } else {
+        setCache(name, {
+          name,
+          rating: null,
+          reviewCount: 0,
+          mapsUrl: null,
+          reviews: [],
+        });
+        const notFound = createErrorIndicator("Not found on Google");
+        headingEl.parentElement.insertBefore(notFound, headingEl.nextSibling);
+      }
+    } catch (err) {
+      loading.remove();
+      console.error(`[HungerHub Enhanced] Error for "${name}":`, err);
+      const errEl = createErrorIndicator("Rating unavailable");
+      headingEl.parentElement.insertBefore(errEl, headingEl.nextSibling);
+    }
+  }
+
+  function injectRating(headingEl, data) {
+    const badge = createBadge(data);
+    const panel = createPanel(data);
+
+    badge.addEventListener("click", (e) => {
+      e.stopPropagation();
+      panel.classList.toggle("hhe-panel--open");
+    });
+
+    headingEl.parentElement.insertBefore(badge, headingEl.nextSibling);
+    badge.parentElement.insertBefore(panel, badge.nextSibling);
+  }
+
+  // ── MutationObserver & Scanning ────────────────────────────────────────────
+
+  function scanPage() {
+    const selector = getConfig("SELECTOR");
+    const headings = document.querySelectorAll(selector);
+    headings.forEach((el) => {
+      if (!el.hasAttribute(PROCESSED_ATTR) && isRestaurantHeading(el)) {
+        enhanceRestaurant(el);
+      }
+    });
+  }
+
+  let scanTimeout = null;
+  function debouncedScan() {
+    if (scanTimeout) clearTimeout(scanTimeout);
+    scanTimeout = setTimeout(scanPage, 300);
+  }
+
+  const observer = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      if (m.addedNodes.length > 0) {
+        debouncedScan();
+        break;
+      }
+    }
+  });
+
+  function init() {
+    observer.observe(document.body, { childList: true, subtree: true });
+    scanPage();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();

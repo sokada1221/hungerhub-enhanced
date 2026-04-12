@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HungerHub Enhanced - Test Harness</title>
+  <style>
+    /* Approximate hungerhub card styling */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f5f5f5;
+      padding: 20px;
+    }
+    .header {
+      background: #5b4fc4;
+      color: #fff;
+      padding: 16px 24px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .header h1 { font-size: 22px; }
+    .header span { font-size: 14px; opacity: 0.85; }
+    .controls {
+      background: #fff;
+      padding: 12px 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    .controls label { font-weight: 600; font-size: 13px; }
+    .controls select, .controls input {
+      padding: 6px 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+    .controls button {
+      background: #5b4fc4;
+      color: #fff;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .controls button:hover { opacity: 0.9; }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .card-img {
+      height: 180px;
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-size: 48px;
+    }
+    .card-body { padding: 16px; }
+    .card-body h5 {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .card-desc {
+      color: #666;
+      font-size: 14px;
+      margin-bottom: 10px;
+    }
+    .card-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+    .card-tag {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border: 2px solid #5b4fc4;
+      color: #5b4fc4;
+      border-radius: 20px;
+    }
+    .card-btn {
+      display: block;
+      margin-left: auto;
+      background: #5b4fc4;
+      color: #fff;
+      border: none;
+      padding: 10px 24px;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    footer {
+      margin-top: 30px;
+      text-align: center;
+      color: #999;
+      font-size: 12px;
+    }
+    #status {
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+      border-radius: 6px;
+      padding: 10px 14px;
+      margin-bottom: 16px;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Uncatering<sup>TM</sup></h1>
+    <span>Test User &mdash; FLR 7 - Lyft - Toronto</span>
+  </div>
+
+  <div id="status">
+    <strong>Test Harness</strong> &mdash;
+    Enter your Google Places API key below and click "Run Test" to verify the script logic with real API calls.
+    Leave blank to test with mock data.
+  </div>
+
+  <div class="controls">
+    <label>API Key:</label>
+    <input type="text" id="apiKeyInput" placeholder="AIza..." style="width: 300px;">
+    <label>Mode:</label>
+    <select id="modeSelect">
+      <option value="mock">Mock Data</option>
+      <option value="live">Live API</option>
+    </select>
+    <button onclick="runTest()">Run Test</button>
+    <button onclick="resetCards()" style="background: #888;">Reset</button>
+  </div>
+
+  <div class="grid" id="restaurantGrid">
+    <!-- Cards injected by JS -->
+  </div>
+
+  <footer>
+    <h3>Useful links</h3>
+    <p>180 John Street Toronto ON M5T 1X5</p>
+    <h3>Made with &#x2764;&#xfe0f; in Canada</h3>
+  </footer>
+
+  <script>
+    // Restaurants matching the real hungerhub page
+    const RESTAURANTS = [
+      { name: "Belly Busters", desc: "Sub sandwiches and snacks", tags: ["VEGETARIAN FRIENDLY"], emoji: "🥪" },
+      { name: "Chiang Mai Thai Kitchen", desc: "Fried rice, stir fry, noodles, and curry", tags: ["VEGETARIAN FRIENDLY", "VEGAN FRIENDLY", "GLUTEN FREE FRIENDLY"], emoji: "🍜" },
+      { name: "Megumi Mazesoba", desc: "Japanese noodles and sides", tags: ["VEGETARIAN FRIENDLY"], emoji: "🍝" },
+      { name: "Migente Cocina", desc: "Latin-inspired bowls and wraps", tags: ["GLUTEN FREE FRIENDLY"], emoji: "🌮" },
+      { name: "Goat Coffee Co", desc: "Coffee, pastries, and light bites", tags: [], emoji: "☕" },
+      { name: "Salus Fresh Foods", desc: "Healthy salads, grain bowls, and smoothies", tags: ["VEGETARIAN FRIENDLY", "VEGAN FRIENDLY"], emoji: "🥗" },
+      { name: "Casa Tropical", desc: "Brazilian-inspired comfort food", tags: ["GLUTEN FREE FRIENDLY"], emoji: "🍛" },
+      { name: "Bold Bites Co.", desc: "Gourmet burgers and fries", tags: [], emoji: "🍔" },
+    ];
+
+    const MOCK_RESPONSES = {
+      "Belly Busters": { name: "Belly Busters", rating: 4.3, reviewCount: 487, mapsUrl: "https://maps.google.com/?cid=1234", reviews: [
+        { author: "Sarah M.", rating: 5, time: "2 weeks ago", text: "Best subs in the area! The Italian BMT is incredible." },
+        { author: "James K.", rating: 4, time: "a month ago", text: "Good portions and fresh ingredients. A bit pricey." },
+        { author: "Priya R.", rating: 4, time: "2 months ago", text: "Vegetarian options are surprisingly good here." },
+      ]},
+      "Chiang Mai Thai Kitchen": { name: "Chiang Mai Thai Kitchen", rating: 4.5, reviewCount: 1203, mapsUrl: "https://maps.google.com/?cid=2345", reviews: [
+        { author: "Alex T.", rating: 5, time: "a week ago", text: "Authentic Thai flavors! The pad thai is the best I've had outside Thailand." },
+        { author: "Maria L.", rating: 5, time: "3 weeks ago", text: "Amazing curry. Generous portions and very flavorful." },
+        { author: "David W.", rating: 4, time: "a month ago", text: "Great food but service can be slow during lunch rush." },
+      ]},
+      "Megumi Mazesoba": { name: "Megumi Mazesoba", rating: 4.1, reviewCount: 312, mapsUrl: "https://maps.google.com/?cid=3456", reviews: [
+        { author: "Ken S.", rating: 5, time: "3 days ago", text: "The mazesoba is addictive. Rich, savory, perfect noodle texture." },
+        { author: "Lisa P.", rating: 3, time: "2 weeks ago", text: "Good but not as good as some other ramen spots in the city." },
+        { author: "Ryan C.", rating: 4, time: "a month ago", text: "Solid noodles. The spicy option has a nice kick." },
+      ]},
+      "Migente Cocina": { name: "Migente Cocina", rating: 3.8, reviewCount: 89, mapsUrl: "https://maps.google.com/?cid=4567", reviews: [
+        { author: "Carlos F.", rating: 4, time: "a week ago", text: "Tasty bowls with good portion sizes. The plantains are a nice touch." },
+        { author: "Emma S.", rating: 3, time: "2 weeks ago", text: "Decent food but could use more seasoning." },
+      ]},
+      "Goat Coffee Co": { name: "Goat Coffee Co", rating: 4.6, reviewCount: 756, mapsUrl: "https://maps.google.com/?cid=5678", reviews: [
+        { author: "Natasha B.", rating: 5, time: "2 days ago", text: "Best espresso in the neighborhood. The baristas really know their craft." },
+        { author: "Mike D.", rating: 5, time: "a week ago", text: "Great atmosphere and even better coffee. Love the pastries too." },
+        { author: "Yuki A.", rating: 4, time: "3 weeks ago", text: "Good coffee but seating is limited during peak hours." },
+      ]},
+      "Salus Fresh Foods": { name: "Salus Fresh Foods", rating: 4.2, reviewCount: 543, mapsUrl: "https://maps.google.com/?cid=6789", reviews: [
+        { author: "Rachel G.", rating: 5, time: "a week ago", text: "My go-to for healthy lunches. The grain bowls are filling and delicious." },
+        { author: "Tom H.", rating: 4, time: "2 weeks ago", text: "Fresh ingredients and good variety. Smoothies are excellent." },
+        { author: "Ana P.", rating: 4, time: "a month ago", text: "Consistent quality. A bit expensive but worth it for the freshness." },
+      ]},
+      "Casa Tropical": { name: "Casa Tropical", rating: 2.7, reviewCount: 34, mapsUrl: "https://maps.google.com/?cid=7890", reviews: [
+        { author: "Felipe R.", rating: 2, time: "3 days ago", text: "Disappointing. The rice was dry and the beans were bland." },
+        { author: "Nina W.", rating: 3, time: "a week ago", text: "OK food but nothing special. Had better Brazilian food elsewhere." },
+      ]},
+      "Bold Bites Co.": { name: "Bold Bites Co.", rating: null, reviewCount: 0, mapsUrl: null, reviews: [] },
+    };
+
+    function buildCards() {
+      const grid = document.getElementById("restaurantGrid");
+      grid.innerHTML = "";
+      RESTAURANTS.forEach(r => {
+        const card = document.createElement("div");
+        card.className = "card";
+        card.innerHTML =
+          `<div class="card-img">${r.emoji}</div>` +
+          `<div class="card-body">` +
+            `<h5>${r.name}</h5>` +
+            `<p class="card-desc">${r.desc}</p>` +
+            `<div class="card-tags">${r.tags.map(t => `<span class="card-tag">${t}</span>`).join("")}</div>` +
+            `<button class="card-btn">Order Lunch</button>` +
+          `</div>`;
+        grid.appendChild(card);
+      });
+    }
+
+    buildCards();
+  </script>
+
+  <!-- Inline the userscript logic (adapted for non-Tampermonkey context) -->
+  <script>
+    // Shim GM_* functions for test harness
+    const _gmStore = {};
+    function GM_getValue(key, def) { return _gmStore.hasOwnProperty(key) ? _gmStore[key] : def; }
+    function GM_setValue(key, val) { _gmStore[key] = val; }
+    function GM_deleteValue(key) { delete _gmStore[key]; }
+    function GM_registerMenuCommand() {}
+
+    // Replace GM_xmlhttpRequest with fetch-based or mock implementation
+    let _useMockData = true;
+
+    function GM_xmlhttpRequest(opts) {
+      if (_useMockData) {
+        // Parse the restaurant name from the request body
+        const body = JSON.parse(opts.data);
+        const query = body.textQuery.replace(/ Toronto$/, "");
+        const mockData = MOCK_RESPONSES[query];
+        setTimeout(() => {
+          if (mockData !== undefined) {
+            const place = mockData.rating !== null ? {
+              displayName: { text: mockData.name },
+              rating: mockData.rating,
+              userRatingCount: mockData.reviewCount,
+              googleMapsUri: mockData.mapsUrl,
+              reviews: mockData.reviews.map(r => ({
+                authorAttribution: { displayName: r.author },
+                rating: r.rating,
+                relativePublishTimeDescription: r.time,
+                text: { text: r.text },
+              })),
+            } : null;
+            opts.onload({
+              status: 200,
+              responseText: JSON.stringify({ places: place ? [place] : [] }),
+            });
+          } else {
+            opts.onload({ status: 200, responseText: JSON.stringify({ places: [] }) });
+          }
+        }, 100 + Math.random() * 300);
+        return;
+      }
+
+      // Live mode: use fetch (works because we're on localhost, no CORS issues with Google API)
+      fetch(opts.url, {
+        method: opts.method,
+        headers: opts.headers,
+        body: opts.data,
+      })
+        .then(async res => {
+          opts.onload({ status: res.status, responseText: await res.text() });
+        })
+        .catch(err => {
+          if (opts.onerror) opts.onerror({ statusText: err.message });
+        });
+    }
+
+    // Test control functions
+    function resetCards() {
+      buildCards();
+      document.getElementById("status").innerHTML =
+        "<strong>Reset complete.</strong> Cards rebuilt without ratings.";
+    }
+
+    function runTest() {
+      resetCards();
+      const apiKey = document.getElementById("apiKeyInput").value.trim();
+      const mode = document.getElementById("modeSelect").value;
+
+      _useMockData = (mode === "mock");
+
+      if (mode === "live" && !apiKey) {
+        document.getElementById("status").innerHTML =
+          '<strong style="color: red;">Error:</strong> API key is required for live mode.';
+        return;
+      }
+
+      GM_setValue("API_KEY", mode === "mock" ? "MOCK_KEY" : apiKey);
+
+      document.getElementById("status").innerHTML =
+        `<strong>Running...</strong> Mode: ${mode}. Scanning for restaurants...`;
+
+      // Re-run the scan
+      setTimeout(() => {
+        scanPage();
+        document.getElementById("status").innerHTML =
+          `<strong>Done!</strong> Mode: ${mode}. Check the cards below for injected ratings.`;
+      }, 100);
+    }
+  </script>
+
+  <!-- Inline the core userscript logic (without IIFE and metadata) -->
+  <script>
+    const DEFAULTS = {
+      SELECTOR: "h5",
+      LOCATION_LAT: 43.6498,
+      LOCATION_LNG: -79.3899,
+      LOCATION_RADIUS: 10000,
+      CACHE_TTL_MS: 30 * 24 * 60 * 60 * 1000,
+      REQUEST_DELAY_MS: 250,
+      LOCATION_QUERY_SUFFIX: "Toronto",
+    };
+
+    function getConfig(key) { return GM_getValue(key, DEFAULTS[key] ?? null); }
+    function getApiKey() { return GM_getValue("API_KEY", ""); }
+
+    // Styles
+    const STYLE = document.createElement("style");
+    STYLE.textContent = `
+      .hhe-badge { display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; padding: 3px 8px; border-radius: 6px; font-size: 13px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.4; cursor: pointer; user-select: none; transition: opacity 0.15s; }
+      .hhe-badge:hover { opacity: 0.85; }
+      .hhe-badge--green { background: #e6f4ea; color: #1e7e34; }
+      .hhe-badge--yellow { background: #fff8e1; color: #b8860b; }
+      .hhe-badge--red { background: #fce4ec; color: #c62828; }
+      .hhe-badge--gray { background: #f5f5f5; color: #757575; }
+      .hhe-stars { letter-spacing: 1px; }
+      .hhe-panel { display: none; margin-top: 6px; padding: 10px 12px; background: #fafafa; border: 1px solid #e0e0e0; border-radius: 8px; font-size: 12.5px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 440px; }
+      .hhe-panel--open { display: block; }
+      .hhe-review { padding: 6px 0; border-bottom: 1px solid #eee; }
+      .hhe-review:last-child { border-bottom: none; }
+      .hhe-review-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px; }
+      .hhe-review-author { font-weight: 600; color: #333; }
+      .hhe-review-time { font-size: 11px; color: #999; }
+      .hhe-review-stars { font-size: 11px; letter-spacing: 0.5px; }
+      .hhe-review-text { color: #555; line-height: 1.45; margin-top: 2px; }
+      .hhe-maps-link { display: inline-block; margin-top: 6px; font-size: 12px; color: #1a73e8; text-decoration: none; }
+      .hhe-maps-link:hover { text-decoration: underline; }
+      .hhe-loading { display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; font-size: 12px; color: #999; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+      @keyframes hhe-spin { to { transform: rotate(360deg); } }
+      .hhe-spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid #ddd; border-top-color: #999; border-radius: 50%; animation: hhe-spin 0.6s linear infinite; }
+    `;
+    document.head.appendChild(STYLE);
+
+    // Cache
+    function normalizeName(name) { return name.trim().toLowerCase().replace(/['']/g, "'"); }
+    function cacheKey(name) { return "_hhe_" + normalizeName(name); }
+    function getCached(name) {
+      const key = cacheKey(name);
+      const entry = GM_getValue(key, null);
+      if (!entry) return null;
+      if (Date.now() - entry.ts > DEFAULTS.CACHE_TTL_MS) { GM_deleteValue(key); return null; }
+      return entry.data;
+    }
+    function setCache(name, data) {
+      const key = cacheKey(name);
+      GM_setValue(key, { ts: Date.now(), data });
+      const keys = GM_getValue("_cacheKeys", []);
+      if (!keys.includes(key)) { keys.push(key); GM_setValue("_cacheKeys", keys); }
+    }
+
+    // API
+    const FIELD_MASK = "places.displayName,places.rating,places.userRatingCount,places.reviews,places.googleMapsUri";
+    function searchPlace(restaurantName) {
+      const apiKey = getApiKey();
+      if (!apiKey) return Promise.reject(new Error("No API key configured"));
+      const suffix = getConfig("LOCATION_QUERY_SUFFIX");
+      const textQuery = suffix ? `${restaurantName} ${suffix}` : restaurantName;
+      return new Promise((resolve, reject) => {
+        GM_xmlhttpRequest({
+          method: "POST",
+          url: "https://places.googleapis.com/v1/places:searchText",
+          headers: { "Content-Type": "application/json", "X-Goog-Api-Key": apiKey, "X-Goog-FieldMask": FIELD_MASK },
+          data: JSON.stringify({ textQuery, locationBias: { circle: { center: { latitude: getConfig("LOCATION_LAT"), longitude: getConfig("LOCATION_LNG") }, radius: getConfig("LOCATION_RADIUS") } }, maxResultCount: 1 }),
+          onload(res) {
+            if (res.status !== 200) { reject(new Error(`Places API ${res.status}: ${res.responseText}`)); return; }
+            try {
+              const body = JSON.parse(res.responseText);
+              const place = body.places?.[0];
+              if (!place) { resolve(null); return; }
+              resolve({
+                name: place.displayName?.text ?? restaurantName,
+                rating: place.rating ?? null,
+                reviewCount: place.userRatingCount ?? 0,
+                mapsUrl: place.googleMapsUri ?? null,
+                reviews: (place.reviews ?? []).slice(0, 3).map(r => ({
+                  author: r.authorAttribution?.displayName ?? "Anonymous",
+                  rating: r.rating ?? null,
+                  time: r.relativePublishTimeDescription ?? "",
+                  text: r.text?.text ?? r.originalText?.text ?? "",
+                })),
+              });
+            } catch (e) { reject(e); }
+          },
+          onerror(err) { reject(new Error("Network error: " + (err.statusText || "unknown"))); },
+        });
+      });
+    }
+
+    // Queue
+    const queue = [];
+    let queueRunning = false;
+    function enqueue(fn) {
+      return new Promise((resolve, reject) => {
+        queue.push({ fn, resolve, reject });
+        if (!queueRunning) processQueue();
+      });
+    }
+    async function processQueue() {
+      queueRunning = true;
+      while (queue.length > 0) {
+        const { fn, resolve, reject } = queue.shift();
+        try { resolve(await fn()); } catch (e) { reject(e); }
+        if (queue.length > 0) await new Promise(r => setTimeout(r, DEFAULTS.REQUEST_DELAY_MS));
+      }
+      queueRunning = false;
+    }
+
+    // UI
+    function renderStars(rating) {
+      if (rating == null) return "";
+      const full = Math.floor(rating);
+      const half = rating - full >= 0.25 && rating - full < 0.75 ? 1 : 0;
+      const addFull = rating - full >= 0.75 ? 1 : 0;
+      const totalFull = full + addFull;
+      const empty = 5 - totalFull - half;
+      return "★".repeat(totalFull) + (half ? "½" : "") + "☆".repeat(Math.max(0, empty));
+    }
+    function ratingColor(rating) {
+      if (rating == null) return "gray";
+      if (rating >= 4.0) return "green";
+      if (rating >= 3.0) return "yellow";
+      return "red";
+    }
+    function createBadge(data) {
+      const badge = document.createElement("div");
+      badge.className = `hhe-badge hhe-badge--${ratingColor(data.rating)}`;
+      badge.innerHTML = `<span class="hhe-stars">${renderStars(data.rating)}</span> <strong>${data.rating != null ? data.rating.toFixed(1) : "N/A"}</strong><span>(${data.reviewCount.toLocaleString()})</span>`;
+      badge.title = "Click to expand reviews";
+      return badge;
+    }
+    function createPanel(data) {
+      const panel = document.createElement("div");
+      panel.className = "hhe-panel";
+      if (data.reviews.length > 0) {
+        data.reviews.forEach(r => {
+          const review = document.createElement("div");
+          review.className = "hhe-review";
+          review.innerHTML = `<div class="hhe-review-header"><span class="hhe-review-author">${escapeHtml(r.author)}</span><span class="hhe-review-time">${escapeHtml(r.time)}</span></div>` +
+            (r.rating != null ? `<div class="hhe-review-stars">${renderStars(r.rating)}</div>` : "") +
+            `<div class="hhe-review-text">${escapeHtml(truncate(r.text, 200))}</div>`;
+          panel.appendChild(review);
+        });
+      } else {
+        const empty = document.createElement("div");
+        empty.style.cssText = "color:#999; font-size:12px; padding:4px 0;";
+        empty.textContent = "No reviews available.";
+        panel.appendChild(empty);
+      }
+      if (data.mapsUrl) {
+        const link = document.createElement("a");
+        link.className = "hhe-maps-link";
+        link.href = data.mapsUrl;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "View on Google Maps \u2197";
+        panel.appendChild(link);
+      }
+      return panel;
+    }
+    function createLoadingIndicator() {
+      const el = document.createElement("div");
+      el.className = "hhe-loading";
+      el.innerHTML = '<span class="hhe-spinner"></span> Loading rating\u2026';
+      return el;
+    }
+    function createErrorIndicator(msg) {
+      const el = document.createElement("div");
+      el.className = "hhe-badge hhe-badge--gray";
+      el.textContent = msg;
+      el.style.cursor = "default";
+      return el;
+    }
+    function escapeHtml(str) { const div = document.createElement("div"); div.textContent = str; return div.innerHTML; }
+    function truncate(str, max) { if (!str || str.length <= max) return str || ""; return str.slice(0, max).replace(/\s+\S*$/, "") + "\u2026"; }
+
+    // DOM injection
+    const PROCESSED_ATTR = "data-hhe-processed";
+    function isRestaurantHeading(el) {
+      const text = el.textContent.trim();
+      if (!text || text.length < 2) return false;
+      const skip = ["useful links", "need help?", "made with", "download"];
+      return !skip.some(t => text.toLowerCase().startsWith(t));
+    }
+    async function enhanceRestaurant(headingEl) {
+      if (headingEl.hasAttribute(PROCESSED_ATTR)) return;
+      headingEl.setAttribute(PROCESSED_ATTR, "1");
+      const name = headingEl.textContent.trim();
+      if (!name) return;
+      const cached = getCached(name);
+      if (cached !== null) { injectRating(headingEl, cached); return; }
+      if (!getApiKey()) {
+        const hint = createErrorIndicator("Set API key in Tampermonkey menu");
+        headingEl.parentElement.insertBefore(hint, headingEl.nextSibling);
+        return;
+      }
+      const loading = createLoadingIndicator();
+      headingEl.parentElement.insertBefore(loading, headingEl.nextSibling);
+      try {
+        const data = await enqueue(() => searchPlace(name));
+        loading.remove();
+        if (data) { setCache(name, data); injectRating(headingEl, data); }
+        else {
+          setCache(name, { name, rating: null, reviewCount: 0, mapsUrl: null, reviews: [] });
+          headingEl.parentElement.insertBefore(createErrorIndicator("Not found on Google"), headingEl.nextSibling);
+        }
+      } catch (err) {
+        loading.remove();
+        console.error(`[HungerHub Enhanced] Error for "${name}":`, err);
+        headingEl.parentElement.insertBefore(createErrorIndicator("Rating unavailable"), headingEl.nextSibling);
+      }
+    }
+    function injectRating(headingEl, data) {
+      const badge = createBadge(data);
+      const panel = createPanel(data);
+      badge.addEventListener("click", e => { e.stopPropagation(); panel.classList.toggle("hhe-panel--open"); });
+      headingEl.parentElement.insertBefore(badge, headingEl.nextSibling);
+      badge.parentElement.insertBefore(panel, badge.nextSibling);
+    }
+
+    // Scan
+    function scanPage() {
+      const selector = getConfig("SELECTOR");
+      document.querySelectorAll(selector).forEach(el => {
+        if (!el.hasAttribute(PROCESSED_ATTR) && isRestaurantHeading(el)) enhanceRestaurant(el);
+      });
+    }
+  </script>
+</body>
+</html>
