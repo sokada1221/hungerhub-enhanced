@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         HungerHub Enhanced
 // @namespace    hungerhub-enhanced
-// @version      1.1.0
+// @version      1.1.1
 // @description  Displays Google ratings, reviews, and Maps links on hungerhub restaurant listings
 // @match        https://uncatering.hungerhub.com/*
 // @grant        GM_xmlhttpRequest
@@ -341,31 +341,70 @@
     });
   }
 
+  function findCardContainer(headingEls) {
+    if (headingEls.length < 2) return null;
+    for (let depth = 1; depth <= 10; depth++) {
+      const ancestors = headingEls.map((h) => {
+        let el = h;
+        for (let i = 0; i < depth && el; i++) el = el.parentElement;
+        return el;
+      });
+      if (ancestors.some((a) => !a)) continue;
+      const uniqueAncestors = new Set(ancestors);
+      const parents = new Set(
+        ancestors.map((a) => a.parentElement).filter(Boolean)
+      );
+      if (uniqueAncestors.size === headingEls.length && parents.size === 1) {
+        return { container: ancestors[0].parentElement, cards: ancestors };
+      }
+    }
+    return null;
+  }
+
   function sortRestaurants() {
     if (ratingRegistry.size < 2) return;
 
     const cardSelector = getConfig("CARD_SELECTOR");
-    const cards = [];
+    let cards;
 
-    for (const [el, data] of ratingRegistry) {
-      const card = cardSelector
-        ? el.closest(cardSelector)
-        : el.parentElement?.parentElement;
-      if (card) cards.push({ card, rating: data.rating, reviewCount: data.reviewCount });
+    if (cardSelector) {
+      cards = [];
+      for (const [el, data] of ratingRegistry) {
+        const card = el.closest(cardSelector);
+        if (card) cards.push({ card, rating: data.rating, reviewCount: data.reviewCount });
+      }
+      if (cards.length < 2) return;
+      const container = cards[0].card.parentElement;
+      if (!container) return;
+
+      cards.sort((a, b) => {
+        const ra = a.rating ?? -1;
+        const rb = b.rating ?? -1;
+        if (rb !== ra) return rb - ra;
+        return b.reviewCount - a.reviewCount;
+      });
+
+      cards.forEach((c) => container.appendChild(c.card));
+    } else {
+      const headings = [...ratingRegistry.keys()];
+      const result = findCardContainer(headings);
+      if (!result) return;
+
+      cards = headings.map((h) => {
+        const data = ratingRegistry.get(h);
+        const idx = headings.indexOf(h);
+        return { card: result.cards[idx], rating: data.rating, reviewCount: data.reviewCount };
+      });
+
+      cards.sort((a, b) => {
+        const ra = a.rating ?? -1;
+        const rb = b.rating ?? -1;
+        if (rb !== ra) return rb - ra;
+        return b.reviewCount - a.reviewCount;
+      });
+
+      cards.forEach((c) => result.container.appendChild(c.card));
     }
-
-    if (cards.length < 2) return;
-    const container = cards[0].card.parentElement;
-    if (!container) return;
-
-    cards.sort((a, b) => {
-      const ra = a.rating ?? -1;
-      const rb = b.rating ?? -1;
-      if (rb !== ra) return rb - ra;
-      return b.reviewCount - a.reviewCount;
-    });
-
-    cards.forEach((c) => container.appendChild(c.card));
   }
 
   // ── UI Rendering ───────────────────────────────────────────────────────────
