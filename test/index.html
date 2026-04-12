@@ -129,9 +129,11 @@
     Leave blank to test with mock data.
   </div>
 
-  <div class="controls">
-    <label>API Key:</label>
-    <input type="text" id="apiKeyInput" placeholder="AIza..." style="width: 300px;">
+  <div class="controls" style="flex-wrap: wrap;">
+    <label>Places API Key:</label>
+    <input type="text" id="apiKeyInput" placeholder="AIza..." style="width: 260px;">
+    <label>Gemini API Key:</label>
+    <input type="text" id="geminiKeyInput" placeholder="AIza... (optional)" style="width: 220px;">
     <label>Mode:</label>
     <select id="modeSelect">
       <option value="mock">Mock Data</option>
@@ -170,7 +172,9 @@
         { author: "James K.", rating: 4, time: "a month ago", text: "Good portions and fresh ingredients. A bit pricey." },
         { author: "Priya R.", rating: 4, time: "2 months ago", text: "Vegetarian options are surprisingly good here." },
       ]},
-      "Chiang Mai Thai Kitchen": { name: "Chiang Mai Thai Kitchen", rating: 4.5, reviewCount: 1203, mapsUrl: "https://maps.google.com/?cid=2345", reviews: [
+      "Chiang Mai Thai Kitchen": { name: "Chiang Mai Thai Kitchen", rating: 4.5, reviewCount: 1203, mapsUrl: "https://maps.google.com/?cid=2345",
+        reviewSummary: "People say this restaurant serves delicious pad thai, green curry, and mango sticky rice. They highlight the authentic Thai flavors, generous portions, and friendly service.",
+        reviews: [
         { author: "Alex T.", rating: 5, time: "a week ago", text: "Authentic Thai flavors! The pad thai is the best I've had outside Thailand." },
         { author: "Maria L.", rating: 5, time: "3 weeks ago", text: "Amazing curry. Generous portions and very flavorful." },
         { author: "David W.", rating: 4, time: "a month ago", text: "Great food but service can be slow during lunch rush." },
@@ -184,7 +188,9 @@
         { author: "Carlos F.", rating: 4, time: "a week ago", text: "Tasty bowls with good portion sizes. The plantains are a nice touch." },
         { author: "Emma S.", rating: 3, time: "2 weeks ago", text: "Decent food but could use more seasoning." },
       ]},
-      "Goat Coffee Co": { name: "Goat Coffee Co", rating: 4.6, reviewCount: 756, mapsUrl: "https://maps.google.com/?cid=5678", reviews: [
+      "Goat Coffee Co": { name: "Goat Coffee Co", rating: 4.6, reviewCount: 756, mapsUrl: "https://maps.google.com/?cid=5678",
+        reviewSummary: "People say this coffee shop has the best espresso in the neighborhood, delicious pastries, and a warm atmosphere. They also like the knowledgeable baristas and cozy vibe.",
+        reviews: [
         { author: "Natasha B.", rating: 5, time: "2 days ago", text: "Best espresso in the neighborhood. The baristas really know their craft." },
         { author: "Mike D.", rating: 5, time: "a week ago", text: "Great atmosphere and even better coffee. Love the pastries too." },
         { author: "Yuki A.", rating: 4, time: "3 weeks ago", text: "Good coffee but seating is limited during peak hours." },
@@ -234,9 +240,40 @@
     // Replace GM_xmlhttpRequest with fetch-based or mock implementation
     let _useMockData = true;
 
+    const MOCK_GEMINI_RESPONSES = {
+      "Belly Busters": ["Italian BMT", "Meatball Sub", "Veggie Deluxe"],
+      "Megumi Mazesoba": ["Mazesoba", "Spicy Mazesoba", "Gyoza"],
+      "Migente Cocina": ["Plantain Bowl", "Latin Wrap"],
+      "Salus Fresh Foods": ["Grain Bowl", "Green Smoothie", "Caesar Salad"],
+      "Casa Tropical": ["Feijoada", "Pão de Queijo"],
+    };
+
     function GM_xmlhttpRequest(opts) {
+      const url = typeof opts.url === "string" ? opts.url : "";
+      const isGemini = url.includes("generativelanguage.googleapis.com");
+
+      if (_useMockData && isGemini) {
+        const body = JSON.parse(opts.data);
+        const prompt = body.contents?.[0]?.parts?.[0]?.text ?? "";
+        let matched = null;
+        for (const name of Object.keys(MOCK_GEMINI_RESPONSES)) {
+          if (prompt.toLowerCase().includes(name.toLowerCase().split(" ")[0])) {
+            matched = MOCK_GEMINI_RESPONSES[name];
+            break;
+          }
+        }
+        setTimeout(() => {
+          opts.onload({
+            status: 200,
+            responseText: JSON.stringify({
+              candidates: [{ content: { parts: [{ text: JSON.stringify(matched || ["Chef Special"]) }] } }],
+            }),
+          });
+        }, 50 + Math.random() * 150);
+        return;
+      }
+
       if (_useMockData) {
-        // Parse the restaurant name from the request body
         const body = JSON.parse(opts.data);
         const query = body.textQuery.replace(/ Toronto$/, "");
         const mockData = MOCK_RESPONSES[query];
@@ -247,6 +284,9 @@
               rating: mockData.rating,
               userRatingCount: mockData.reviewCount,
               googleMapsUri: mockData.mapsUrl,
+              reviewSummary: mockData.reviewSummary ? {
+                text: { text: mockData.reviewSummary },
+              } : undefined,
               reviews: mockData.reviews.map(r => ({
                 authorAttribution: { displayName: r.author },
                 rating: r.rating,
@@ -265,7 +305,7 @@
         return;
       }
 
-      // Live mode: use fetch (works because we're on localhost, no CORS issues with Google API)
+      // Live mode: use fetch
       fetch(opts.url, {
         method: opts.method,
         headers: opts.headers,
@@ -290,26 +330,32 @@
     function runTest() {
       resetCards();
       const apiKey = document.getElementById("apiKeyInput").value.trim();
+      const geminiKey = document.getElementById("geminiKeyInput").value.trim();
       const mode = document.getElementById("modeSelect").value;
 
       _useMockData = (mode === "mock");
 
       if (mode === "live" && !apiKey) {
         document.getElementById("status").innerHTML =
-          '<strong style="color: red;">Error:</strong> API key is required for live mode.';
+          '<strong style="color: red;">Error:</strong> Places API key is required for live mode.';
         return;
       }
 
       GM_setValue("API_KEY", mode === "mock" ? "MOCK_KEY" : apiKey);
+      GM_setValue("GEMINI_API_KEY", mode === "mock" ? "MOCK_GEMINI_KEY" : geminiKey);
+
+      const geminiStatus = (mode === "mock" || geminiKey)
+        ? "Gemini extraction enabled"
+        : "Gemini extraction disabled (no key), using heuristic fallback";
 
       document.getElementById("status").innerHTML =
-        `<strong>Running...</strong> Mode: ${mode}. Scanning for restaurants...`;
+        `<strong>Running...</strong> Mode: ${mode}. ${geminiStatus}. Scanning for restaurants...`;
 
       // Re-run the scan
       setTimeout(() => {
         scanPage();
         document.getElementById("status").innerHTML =
-          `<strong>Done!</strong> Mode: ${mode}. Check the cards below for injected ratings.`;
+          `<strong>Done!</strong> Mode: ${mode}. ${geminiStatus}. Check the cards below.`;
       }, 100);
     }
   </script>
@@ -329,6 +375,7 @@
 
     function getConfig(key) { return GM_getValue(key, DEFAULTS[key] ?? null); }
     function getApiKey() { return GM_getValue("API_KEY", ""); }
+    function getGeminiApiKey() { return GM_getValue("GEMINI_API_KEY", ""); }
 
     // Styles
     const STYLE = document.createElement("style");
@@ -349,6 +396,12 @@
       .hhe-review-time { font-size: 11px; color: #999; }
       .hhe-review-stars { font-size: 11px; letter-spacing: 0.5px; }
       .hhe-review-text { color: #555; line-height: 1.45; margin-top: 2px; }
+      .hhe-picks { padding: 6px 0 8px; border-bottom: 1px solid #eee; margin-bottom: 4px; }
+      .hhe-picks-label { font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; }
+      .hhe-picks-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+      .hhe-pick-tag { display: inline-block; padding: 2px 8px; background: #e8f0fe; color: #1967d2; border-radius: 12px; font-size: 11.5px; font-weight: 500; line-height: 1.4; }
+      .hhe-summary-text { color: #444; font-size: 12px; line-height: 1.5; padding: 6px 0 8px; border-bottom: 1px solid #eee; margin-bottom: 4px; }
+      .hhe-summary-attr { font-size: 10px; color: #aaa; margin-top: 3px; font-style: italic; }
       .hhe-maps-link { display: inline-block; margin-top: 6px; font-size: 12px; color: #1a73e8; text-decoration: none; }
       .hhe-maps-link:hover { text-decoration: underline; }
       .hhe-loading { display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; font-size: 12px; color: #999; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -375,7 +428,7 @@
     }
 
     // API
-    const FIELD_MASK = "places.displayName,places.rating,places.userRatingCount,places.reviews,places.googleMapsUri";
+    const FIELD_MASK = "places.displayName,places.rating,places.userRatingCount,places.reviews,places.reviewSummary,places.googleMapsUri";
     function searchPlace(restaurantName) {
       const apiKey = getApiKey();
       if (!apiKey) return Promise.reject(new Error("No API key configured"));
@@ -398,18 +451,85 @@
                 rating: place.rating ?? null,
                 reviewCount: place.userRatingCount ?? 0,
                 mapsUrl: place.googleMapsUri ?? null,
-                reviews: (place.reviews ?? []).slice(0, 3).map(r => ({
+                reviewSummary: place.reviewSummary?.text?.text ?? null,
+                reviews: (place.reviews ?? []).slice(0, 5).map(r => ({
                   author: r.authorAttribution?.displayName ?? "Anonymous",
                   rating: r.rating ?? null,
                   time: r.relativePublishTimeDescription ?? "",
                   text: r.text?.text ?? r.originalText?.text ?? "",
                 })),
+                popularItems: null,
               });
             } catch (e) { reject(e); }
           },
           onerror(err) { reject(new Error("Network error: " + (err.statusText || "unknown"))); },
         });
       });
+    }
+
+    // Gemini extraction
+    const GEMINI_MODEL = "gemini-flash-latest";
+    function extractItemsViaGemini(reviews) {
+      const geminiKey = getGeminiApiKey();
+      if (!geminiKey) return Promise.resolve(null);
+      const reviewTexts = reviews.map(r => r.text).filter(t => t && t.length > 10);
+      if (reviewTexts.length === 0) return Promise.resolve(null);
+      const prompt = "Extract the top 3-5 most recommended menu items or dishes from these restaurant reviews. Return ONLY a JSON array of short strings (dish names), no other text.\n\nReviews:\n" + reviewTexts.map((t, i) => `${i + 1}. ${t}`).join("\n");
+      return new Promise(resolve => {
+        GM_xmlhttpRequest({
+          method: "POST",
+          url: `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${geminiKey}`,
+          headers: { "Content-Type": "application/json" },
+          data: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.1, maxOutputTokens: 256, responseMimeType: "application/json" } }),
+          onload(res) {
+            try {
+              if (res.status !== 200) { resolve(null); return; }
+              const body = JSON.parse(res.responseText);
+              const text = body.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+              const items = JSON.parse(text);
+              resolve(Array.isArray(items) && items.length > 0 ? items.slice(0, 5).map(s => String(s).trim()).filter(Boolean) : null);
+            } catch (e) { resolve(null); }
+          },
+          onerror() { resolve(null); },
+        });
+      });
+    }
+
+    // Heuristic extraction
+    function extractItemsFromText(reviews) {
+      const texts = reviews.map(r => r.text).filter(t => t && t.length > 10);
+      if (texts.length === 0) return null;
+      const combined = texts.join(" ");
+      const mentions = new Map();
+      const patterns = [
+        /(?:try|loved|recommend|order(?:ed)?|had|get)\s+the\s+((?:[A-Z][a-z]+)(?:\s+[a-z]+){0,3})/g,
+        /[Tt]he\s+((?:[A-Z][a-z]+)(?:\s+[a-z]+){0,3})\s+(?:is|was|were)\s+(?:amazing|delicious|great|excellent|good|fantastic|incredible|perfect|outstanding|superb)/g,
+        /[Bb]est\s+((?:[a-z]+)(?:\s+[a-z]+){0,2})\s+(?:I've|I have|ever|in town|in the|around)/g,
+        /(?:must[- ]try|signature|famous(?:\s+for)?)\s+(?:the\s+)?((?:[A-Z][a-z]+)(?:\s+[a-z]+){0,3})/g,
+      ];
+      for (const pattern of patterns) {
+        let match;
+        while ((match = pattern.exec(combined)) !== null) {
+          const item = match[1].trim().replace(/\s+/g, " ");
+          if (item.length >= 3 && item.length <= 40) {
+            const key = item.toLowerCase();
+            mentions.set(key, { display: item, count: (mentions.get(key)?.count ?? 0) + 1 });
+          }
+        }
+      }
+      if (mentions.size === 0) return null;
+      const stopWords = new Set(["the food", "the place", "the restaurant", "the service", "the staff", "the price", "the portion", "the quality", "the atmosphere", "the location", "the menu", "the wait", "the experience", "the owner", "the delivery"]);
+      const sorted = [...mentions.entries()].filter(([key]) => !stopWords.has(key)).sort((a, b) => b[1].count - a[1].count).slice(0, 5).map(([, v]) => v.display);
+      return sorted.length > 0 ? sorted : null;
+    }
+
+    async function resolvePopularItems(reviews) {
+      if (!reviews || reviews.length === 0) return null;
+      if (getGeminiApiKey()) {
+        const items = await extractItemsViaGemini(reviews);
+        if (items && items.length > 0) return items;
+      }
+      return extractItemsFromText(reviews);
     }
 
     // Queue
@@ -457,8 +577,19 @@
     function createPanel(data) {
       const panel = document.createElement("div");
       panel.className = "hhe-panel";
+      if (data.reviewSummary) {
+        const summary = document.createElement("div");
+        summary.className = "hhe-summary-text";
+        summary.innerHTML = escapeHtml(data.reviewSummary) + `<div class="hhe-summary-attr">Summarized with Gemini</div>`;
+        panel.appendChild(summary);
+      } else if (data.popularItems && data.popularItems.length > 0) {
+        const picks = document.createElement("div");
+        picks.className = "hhe-picks";
+        picks.innerHTML = `<div class="hhe-picks-label">Top Picks</div><div class="hhe-picks-tags">${data.popularItems.map(item => `<span class="hhe-pick-tag">${escapeHtml(item)}</span>`).join("")}</div>`;
+        panel.appendChild(picks);
+      }
       if (data.reviews.length > 0) {
-        data.reviews.forEach(r => {
+        data.reviews.slice(0, 3).forEach(r => {
           const review = document.createElement("div");
           review.className = "hhe-review";
           review.innerHTML = `<div class="hhe-review-header"><span class="hhe-review-author">${escapeHtml(r.author)}</span><span class="hhe-review-time">${escapeHtml(r.time)}</span></div>` +
@@ -586,9 +717,13 @@
       try {
         const data = await enqueue(() => searchPlace(name));
         loading.remove();
-        if (data) { setCache(name, data); registerRating(headingEl, data); injectRating(headingEl, data); }
-        else {
-          const fallback = { name, rating: null, reviewCount: 0, mapsUrl: null, reviews: [] };
+        if (data) {
+          if (!data.reviewSummary) {
+            data.popularItems = await resolvePopularItems(data.reviews);
+          }
+          setCache(name, data); registerRating(headingEl, data); injectRating(headingEl, data);
+        } else {
+          const fallback = { name, rating: null, reviewCount: 0, mapsUrl: null, reviewSummary: null, reviews: [], popularItems: null };
           setCache(name, fallback);
           registerRating(headingEl, fallback);
           headingEl.parentElement.insertBefore(createErrorIndicator("Not found on Google"), headingEl.nextSibling);

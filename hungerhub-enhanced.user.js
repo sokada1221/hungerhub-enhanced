@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         HungerHub Enhanced
 // @namespace    hungerhub-enhanced
-// @version      1.1.3
-// @description  Displays Google ratings, reviews, and Maps links on hungerhub restaurant listings
+// @version      1.2.0
+// @description  Displays Google ratings, reviews, popular menu items, and Maps links on hungerhub restaurant listings
 // @match        https://uncatering.hungerhub.com/restaurants*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
@@ -10,6 +10,7 @@
 // @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
 // @connect      places.googleapis.com
+// @connect      generativelanguage.googleapis.com
 // ==/UserScript==
 
 (function () {
@@ -35,6 +36,10 @@
 
   function getApiKey() {
     return GM_getValue("API_KEY", "");
+  }
+
+  function getGeminiApiKey() {
+    return GM_getValue("GEMINI_API_KEY", "");
   }
 
   // ── Menu Commands ──────────────────────────────────────────────────────────
@@ -82,6 +87,20 @@
     if (sel !== null) {
       GM_setValue("CARD_SELECTOR", sel.trim() || null);
       alert("Card selector saved. Reload the page to apply.");
+    }
+  });
+
+  GM_registerMenuCommand("Set Gemini API Key", () => {
+    const current = getGeminiApiKey();
+    const key = prompt(
+      "Enter your Gemini API key (from Google AI Studio).\n" +
+        "Used to extract popular menu items from reviews when Google's\n" +
+        "built-in review summary is unavailable:",
+      current
+    );
+    if (key !== null) {
+      GM_setValue("GEMINI_API_KEY", key.trim());
+      alert("Gemini API key saved. Reload the page to apply.");
     }
   });
 
@@ -161,6 +180,49 @@
       margin-top: 2px;
     }
 
+    .hhe-picks {
+      padding: 6px 0 8px;
+      border-bottom: 1px solid #eee;
+      margin-bottom: 4px;
+    }
+    .hhe-picks-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 5px;
+    }
+    .hhe-picks-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+    .hhe-pick-tag {
+      display: inline-block;
+      padding: 2px 8px;
+      background: #e8f0fe;
+      color: #1967d2;
+      border-radius: 12px;
+      font-size: 11.5px;
+      font-weight: 500;
+      line-height: 1.4;
+    }
+    .hhe-summary-text {
+      color: #444;
+      font-size: 12px;
+      line-height: 1.5;
+      padding: 6px 0 8px;
+      border-bottom: 1px solid #eee;
+      margin-bottom: 4px;
+    }
+    .hhe-summary-attr {
+      font-size: 10px;
+      color: #aaa;
+      margin-top: 3px;
+      font-style: italic;
+    }
+
     .hhe-maps-link {
       display: inline-block;
       margin-top: 6px;
@@ -229,7 +291,7 @@
   // ── Google Places API ──────────────────────────────────────────────────────
 
   const FIELD_MASK =
-    "places.displayName,places.rating,places.userRatingCount,places.reviews,places.googleMapsUri";
+    "places.displayName,places.rating,places.userRatingCount,places.reviews,places.reviewSummary,places.googleMapsUri";
 
   function searchPlace(restaurantName) {
     const apiKey = getApiKey();
@@ -281,7 +343,8 @@
               rating: place.rating ?? null,
               reviewCount: place.userRatingCount ?? 0,
               mapsUrl: place.googleMapsUri ?? null,
-              reviews: (place.reviews ?? []).slice(0, 3).map((r) => ({
+              reviewSummary: place.reviewSummary?.text?.text ?? null,
+              reviews: (place.reviews ?? []).slice(0, 5).map((r) => ({
                 author: r.authorAttribution?.displayName ?? "Anonymous",
                 rating: r.rating ?? null,
                 time: r.relativePublishTimeDescription ?? "",
@@ -290,6 +353,7 @@
                   r.originalText?.text ??
                   "",
               })),
+              popularItems: null,
             });
           } catch (e) {
             reject(e);
@@ -300,6 +364,115 @@
         },
       });
     });
+  }
+
+  // ── Gemini API (Popular Items Extraction) ─────────────────────────────────
+
+  const GEMINI_MODEL = "gemini-flash-latest";
+
+  function extractItemsViaGemini(reviews) {
+    const geminiKey = getGeminiApiKey();
+    if (!geminiKey) return Promise.resolve(null);
+
+    const reviewTexts = reviews
+      .map((r) => r.text)
+      .filter((t) => t && t.length > 10);
+    if (reviewTexts.length === 0) return Promise.resolve(null);
+
+    const prompt =
+      "Extract the top 3-5 most recommended menu items or dishes from these restaurant reviews. " +
+      "Return ONLY a JSON array of short strings (dish names), no other text.\n\n" +
+      "Reviews:\n" +
+      reviewTexts.map((t, i) => `${i + 1}. ${t}`).join("\n");
+
+    return new Promise((resolve) => {
+      GM_xmlhttpRequest({
+        method: "POST",
+        url: `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${geminiKey}`,
+        headers: { "Content-Type": "application/json" },
+        data: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 256,
+            responseMimeType: "application/json",
+          },
+        }),
+        onload(res) {
+          try {
+            if (res.status !== 200) {
+              console.warn("[HungerHub Enhanced] Gemini API error:", res.status, res.responseText);
+              resolve(null);
+              return;
+            }
+            const body = JSON.parse(res.responseText);
+            const text = body.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+            const items = JSON.parse(text);
+            if (Array.isArray(items) && items.length > 0) {
+              resolve(items.slice(0, 5).map((s) => String(s).trim()).filter(Boolean));
+            } else {
+              resolve(null);
+            }
+          } catch (e) {
+            console.warn("[HungerHub Enhanced] Gemini parse error:", e);
+            resolve(null);
+          }
+        },
+        onerror() {
+          resolve(null);
+        },
+      });
+    });
+  }
+
+  // ── Heuristic Menu Item Extraction ──────────────────────────────────────────
+
+  function extractItemsFromText(reviews) {
+    const texts = reviews
+      .map((r) => r.text)
+      .filter((t) => t && t.length > 10);
+    if (texts.length === 0) return null;
+
+    const combined = texts.join(" ");
+    const mentions = new Map();
+
+    const patterns = [
+      /(?:try|loved|recommend|order(?:ed)?|had|get)\s+the\s+((?:[A-Z][a-z]+)(?:\s+[a-z]+){0,3})/g,
+      /[Tt]he\s+((?:[A-Z][a-z]+)(?:\s+[a-z]+){0,3})\s+(?:is|was|were)\s+(?:amazing|delicious|great|excellent|good|fantastic|incredible|perfect|outstanding|superb)/g,
+      /[Bb]est\s+((?:[a-z]+)(?:\s+[a-z]+){0,2})\s+(?:I've|I have|ever|in town|in the|around)/g,
+      /(?:must[- ]try|signature|famous(?:\s+for)?)\s+(?:the\s+)?((?:[A-Z][a-z]+)(?:\s+[a-z]+){0,3})/g,
+    ];
+
+    for (const pattern of patterns) {
+      let match;
+      while ((match = pattern.exec(combined)) !== null) {
+        const item = match[1].trim().replace(/\s+/g, " ");
+        if (item.length >= 3 && item.length <= 40) {
+          const key = item.toLowerCase();
+          mentions.set(key, {
+            display: item,
+            count: (mentions.get(key)?.count ?? 0) + 1,
+          });
+        }
+      }
+    }
+
+    if (mentions.size === 0) return null;
+
+    const stopWords = new Set([
+      "the food", "the place", "the restaurant", "the service",
+      "the staff", "the price", "the portion", "the quality",
+      "the atmosphere", "the location", "the menu", "the wait",
+      "the experience", "the owner", "the delivery",
+    ]);
+
+    const sorted = [...mentions.entries()]
+      .filter(([key]) => !stopWords.has(key))
+      .sort((a, b) => b[1].count - a[1].count)
+      .slice(0, 5)
+      .map(([, v]) => v.display);
+
+    return sorted.length > 0 ? sorted : null;
   }
 
   // ── Rate-Limited Request Queue ─────────────────────────────────────────────
@@ -452,8 +625,24 @@
     const panel = document.createElement("div");
     panel.className = "hhe-panel";
 
+    if (data.reviewSummary) {
+      const summary = document.createElement("div");
+      summary.className = "hhe-summary-text";
+      summary.innerHTML =
+        escapeHtml(data.reviewSummary) +
+        `<div class="hhe-summary-attr">Summarized with Gemini</div>`;
+      panel.appendChild(summary);
+    } else if (data.popularItems && data.popularItems.length > 0) {
+      const picks = document.createElement("div");
+      picks.className = "hhe-picks";
+      picks.innerHTML =
+        `<div class="hhe-picks-label">Top Picks</div>` +
+        `<div class="hhe-picks-tags">${data.popularItems.map((item) => `<span class="hhe-pick-tag">${escapeHtml(item)}</span>`).join("")}</div>`;
+      panel.appendChild(picks);
+    }
+
     if (data.reviews.length > 0) {
-      data.reviews.forEach((r) => {
+      data.reviews.slice(0, 3).forEach((r) => {
         const review = document.createElement("div");
         review.className = "hhe-review";
         review.innerHTML =
@@ -531,6 +720,15 @@
     );
   }
 
+  async function resolvePopularItems(reviews) {
+    if (!reviews || reviews.length === 0) return null;
+    if (getGeminiApiKey()) {
+      const items = await extractItemsViaGemini(reviews);
+      if (items && items.length > 0) return items;
+    }
+    return extractItemsFromText(reviews);
+  }
+
   async function enhanceRestaurant(headingEl) {
     if (headingEl.hasAttribute(PROCESSED_ATTR)) return;
     headingEl.setAttribute(PROCESSED_ATTR, "1");
@@ -559,6 +757,9 @@
       const data = await enqueue(() => searchPlace(name));
       loading.remove();
       if (data) {
+        if (!data.reviewSummary) {
+          data.popularItems = await resolvePopularItems(data.reviews);
+        }
         setCache(name, data);
         registerRating(headingEl, data);
         injectRating(headingEl, data);
@@ -568,7 +769,9 @@
           rating: null,
           reviewCount: 0,
           mapsUrl: null,
+          reviewSummary: null,
           reviews: [],
+          popularItems: null,
         };
         setCache(name, fallback);
         registerRating(headingEl, fallback);
