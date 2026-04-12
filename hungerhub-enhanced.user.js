@@ -755,15 +755,17 @@
 
     try {
       const data = await enqueue(() => searchPlace(name));
-      loading.remove();
       if (data) {
         if (!data.reviewSummary) {
+          loading.innerHTML = '<span class="hhe-spinner"></span> Finding top picks\u2026';
           data.popularItems = await resolvePopularItems(data.reviews);
         }
+        loading.remove();
         setCache(name, data);
         registerRating(headingEl, data);
         injectRating(headingEl, data);
       } else {
+        loading.remove();
         const fallback = {
           name,
           rating: null,
