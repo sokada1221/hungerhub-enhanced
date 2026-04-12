@@ -480,13 +480,17 @@
           method: "POST",
           url: `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${geminiKey}`,
           headers: { "Content-Type": "application/json" },
-          data: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.1, maxOutputTokens: 256, responseMimeType: "application/json" } }),
+          data: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.1, maxOutputTokens: 256, responseMimeType: "application/json", responseSchema: { type: "ARRAY", items: { type: "STRING" } } } }),
           onload(res) {
             try {
               if (res.status !== 200) { resolve(null); return; }
               const body = JSON.parse(res.responseText);
               const text = body.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-              const items = JSON.parse(text);
+              let items;
+              try { items = JSON.parse(text); } catch (_) {
+                const match = text.match(/\[[\s\S]*?\]/);
+                items = match ? JSON.parse(match[0]) : null;
+              }
               resolve(Array.isArray(items) && items.length > 0 ? items.slice(0, 5).map(s => String(s).trim()).filter(Boolean) : null);
             } catch (e) { resolve(null); }
           },
@@ -716,13 +720,15 @@
       headingEl.parentElement.insertBefore(loading, headingEl.nextSibling);
       try {
         const data = await enqueue(() => searchPlace(name));
-        loading.remove();
         if (data) {
           if (!data.reviewSummary) {
+            loading.innerHTML = '<span class="hhe-spinner"></span> Finding top picks\u2026';
             data.popularItems = await resolvePopularItems(data.reviews);
           }
+          loading.remove();
           setCache(name, data); registerRating(headingEl, data); injectRating(headingEl, data);
         } else {
+          loading.remove();
           const fallback = { name, rating: null, reviewCount: 0, mapsUrl: null, reviewSummary: null, reviews: [], popularItems: null };
           setCache(name, fallback);
           registerRating(headingEl, fallback);

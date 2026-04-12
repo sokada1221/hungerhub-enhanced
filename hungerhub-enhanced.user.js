@@ -396,6 +396,10 @@
             temperature: 0.1,
             maxOutputTokens: 256,
             responseMimeType: "application/json",
+            responseSchema: {
+              type: "ARRAY",
+              items: { type: "STRING" },
+            },
           },
         }),
         onload(res) {
@@ -407,7 +411,13 @@
             }
             const body = JSON.parse(res.responseText);
             const text = body.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-            const items = JSON.parse(text);
+            let items;
+            try {
+              items = JSON.parse(text);
+            } catch (_) {
+              const match = text.match(/\[[\s\S]*?\]/);
+              items = match ? JSON.parse(match[0]) : null;
+            }
             if (Array.isArray(items) && items.length > 0) {
               resolve(items.slice(0, 5).map((s) => String(s).trim()).filter(Boolean));
             } else {
