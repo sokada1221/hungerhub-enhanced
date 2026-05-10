@@ -370,7 +370,7 @@
 
   const GEMINI_MODEL = "gemini-2.0-flash";
 
-  function extractItemsViaGemini(reviews) {
+  function extractItemsViaGemini(reviews, retryCount = 0) {
     const geminiKey = getGeminiApiKey();
     if (!geminiKey) return Promise.resolve(null);
 
@@ -404,6 +404,22 @@
         }),
         onload(res) {
           try {
+            const MAX_RETRIES = 3;
+            if (res.status === 429 && retryCount < MAX_RETRIES) {
+              let delayMs = 20000;
+              try {
+                const errBody = JSON.parse(res.responseText);
+                const retryInfo = errBody.error?.details?.find(
+                  (d) => d["@type"] === "type.googleapis.com/google.rpc.RetryInfo"
+                );
+                if (retryInfo?.retryDelay) {
+                  delayMs = Math.ceil(parseFloat(retryInfo.retryDelay) * 1000) + 1000;
+                }
+              } catch (_) {}
+              console.log(`[HungerHub Enhanced] Gemini rate limited. Retrying in ${delayMs}ms (attempt ${retryCount + 1}/${MAX_RETRIES})…`);
+              setTimeout(() => extractItemsViaGemini(reviews, retryCount + 1).then(resolve), delayMs);
+              return;
+            }
             if (res.status !== 200) {
               console.warn("[HungerHub Enhanced] Gemini API error:", res.status, res.responseText);
               resolve(null);
