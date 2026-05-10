@@ -368,7 +368,7 @@
 
   // ── Gemini API (Popular Items Extraction) ─────────────────────────────────
 
-  const GEMINI_MODEL = "gemini-flash-latest";
+  const GEMINI_MODEL = "gemini-2.0-flash";
 
   function extractItemsViaGemini(reviews) {
     const geminiKey = getGeminiApiKey();
