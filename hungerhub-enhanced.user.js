@@ -411,6 +411,7 @@
             }
             const body = JSON.parse(res.responseText);
             const text = body.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+            console.log("[HHE debug] Gemini raw text:", text);
             let items;
             try {
               items = JSON.parse(text);
@@ -421,6 +422,7 @@
             if (Array.isArray(items) && items.length > 0) {
               resolve(items.slice(0, 5).map((s) => String(s).trim()).filter(Boolean));
             } else {
+              console.warn("[HungerHub Enhanced] Gemini returned no items. Raw text:", text);
               resolve(null);
             }
           } catch (e) {
@@ -428,7 +430,8 @@
             resolve(null);
           }
         },
-        onerror() {
+        onerror(err) {
+          console.warn("[HungerHub Enhanced] Gemini network error:", err);
           resolve(null);
         },
       });
@@ -732,11 +735,15 @@
 
   async function resolvePopularItems(reviews) {
     if (!reviews || reviews.length === 0) return null;
+    console.log(`[HHE debug] resolvePopularItems: ${reviews.length} reviews`);
     if (getGeminiApiKey()) {
       const items = await extractItemsViaGemini(reviews);
+      console.log("[HHE debug] Gemini result:", items);
       if (items && items.length > 0) return items;
     }
-    return extractItemsFromText(reviews);
+    const heuristicResult = extractItemsFromText(reviews);
+    console.log("[HHE debug] heuristic result:", heuristicResult);
+    return heuristicResult;
   }
 
   async function enhanceRestaurant(headingEl) {
@@ -767,6 +774,7 @@
       const data = await enqueue(() => searchPlace(name));
       if (data) {
         if (!data.reviewSummary) {
+          console.log(`[HHE debug] reviews count: ${data.reviews.length}`, data.reviews.map(r => r.text.slice(0, 40)));
           loading.innerHTML = '<span class="hhe-spinner"></span> Finding top picks\u2026';
           data.popularItems = await resolvePopularItems(data.reviews);
         }
