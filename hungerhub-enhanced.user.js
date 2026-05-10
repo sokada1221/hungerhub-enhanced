@@ -652,7 +652,7 @@
     }
 
     if (data.reviews.length > 0) {
-      data.reviews.slice(0, 3).forEach((r) => {
+      data.reviews.slice(0, 5).forEach((r) => {
         const review = document.createElement("div");
         review.className = "hhe-review";
         review.innerHTML =
